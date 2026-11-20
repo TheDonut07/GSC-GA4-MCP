@@ -1,0 +1,25 @@
+{
+  "name": "gsc-ga4-mcp",
+  "version": "1.0.0",
+  "description": "Remote MCP server for Google Search Console + GA4 on Cloudflare Workers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "token": "node scripts/generate-token.mjs",
+    "tail": "wrangler tail"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261119.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.165.0"
+  },
+  "private": true
+}

@@ -1,0 +1,23 @@
+# Dependencies & build output (recreated by `npm install` / wrangler)
+node_modules/
+.wrangler/
+dist/
+
+# Secrets: never commit these
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+*.key.json
+service-account*.json
+credentials*.json
+*.pem
+
+# Logs & OS / editor clutter
+*.log
+npm-debug.log*
+*.stackdump
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
