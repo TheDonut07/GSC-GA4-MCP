@@ -15,7 +15,6 @@ export function fail(err: unknown): ToolResult {
   return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
 }
 
-/** Wraps a tool handler so thrown errors become readable tool errors instead of crashes. */
 export function safe<A>(fn: (args: A) => Promise<unknown>) {
   return async (args: A): Promise<ToolResult> => {
     try {
@@ -30,11 +29,6 @@ function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Resolves a date range. Accepts YYYY-MM-DD or shortcuts:
- * "today", "yesterday", "NdaysAgo". Defaults to the last 28 full days,
- * ending 3 days ago for GSC (its data lags ~2-3 days).
- */
 export function resolveDate(value: string | undefined, fallbackDaysAgo: number): string {
   const now = new Date();
   const daysAgo = (n: number) => {
@@ -71,7 +65,6 @@ export function ga4Property(env: Env, property: string | undefined): string {
   return p;
 }
 
-/** Turns a GA4 report response into compact row objects. */
 export function flattenGa4Report(r: any) {
   const dims: string[] = (r.dimensionHeaders ?? []).map((h: any) => h.name);
   const mets: string[] = (r.metricHeaders ?? []).map((h: any) => h.name);
@@ -97,7 +90,6 @@ export function round(n: number, dp = 4): number {
   return Math.round(n * f) / f;
 }
 
-/** "https://www.example.com/blog/post?x=1" -> "/blog/post" */
 export function urlPath(u: string): string {
   try {
     const p = new URL(u).pathname;

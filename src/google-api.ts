@@ -1,7 +1,6 @@
 import { getGoogleAccessToken } from "./google-auth";
 import type { Env } from "./env";
 
-/** Small fetch wrapper for Google REST APIs that turns errors into readable messages. */
 export async function googleFetch<T = any>(
   env: Env,
   url: string,

@@ -1,14 +1,5 @@
-/**
- * Google service-account authentication using only Web Crypto
- * (the `googleapis` npm package does not run on Cloudflare Workers).
- *
- * Flow: sign a JWT with the service account's private key -> exchange it at
- * Google's token endpoint for a 1-hour access token -> cache it in memory.
- */
-
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
-// Read-only scopes: this server can never change anything in GSC or GA4.
 const SCOPES = [
   "https://www.googleapis.com/auth/webmasters.readonly",
   "https://www.googleapis.com/auth/analytics.readonly",
@@ -69,7 +60,6 @@ export async function getGoogleAccessToken(saJson: string | undefined): Promise<
   const sa = parseServiceAccount(saJson);
   const now = Math.floor(Date.now() / 1000);
 
-  // Reuse a cached token until 5 minutes before it expires.
   if (cached && cached.keyId === sa.client_email && cached.expiresAt - 300 > now) {
     return cached.token;
   }

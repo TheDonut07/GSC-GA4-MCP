@@ -20,7 +20,6 @@ function buildServer(env: Env): McpServer {
   return server;
 }
 
-/** SHA-256 both sides then compare, so the comparison time doesn't leak the token. */
 async function sameSecret(a: string, b: string): Promise<boolean> {
   const enc = new TextEncoder();
   const [ha, hb] = await Promise.all([
@@ -34,13 +33,12 @@ async function sameSecret(a: string, b: string): Promise<boolean> {
   return diff === 0;
 }
 
-/** Returns the name of the person whose token matches, or null. */
 async function authenticate(token: string | null, env: Env): Promise<string | null> {
   if (!token || !env.ACCESS_TOKENS) return null;
   let match: string | null = null;
   for (const entry of env.ACCESS_TOKENS.split(",")) {
     const [name, secret] = entry.trim().split(":");
-    if (!name || !secret || secret.length < 24) continue; // ignore weak/malformed entries
+    if (!name || !secret || secret.length < 24) continue;
     if (await sameSecret(token, secret)) match = name;
   }
   return match;
@@ -56,8 +54,6 @@ export default {
       });
     }
 
-    // Token can come from the URL path (/mcp/<token>, for claude.ai connectors)
-    // or from an Authorization: Bearer header (for Claude Desktop / Claude Code).
     let token: string | null = null;
     const m = url.pathname.match(/^\/mcp\/([^/]+)\/?$/);
     if (m) {
@@ -78,19 +74,15 @@ export default {
     }
 
     if (request.method === "POST") {
-      // Log who called what (visible with `npx wrangler tail`). Never logs tokens.
       try {
         const body = await request.clone().json<any>();
         const msgs = Array.isArray(body) ? body : [body];
         for (const msg of msgs) {
           if (msg?.method === "tools/call") console.log(`[${user}] tool: ${msg.params?.name}`);
         }
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }
 
-    // Stateless mode: a fresh server + transport per request (fits Workers well).
     const server = buildServer(env);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
