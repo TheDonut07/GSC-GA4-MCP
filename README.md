@@ -1,111 +1,238 @@
 # GSC + GA4 MCP Server
 
-A remote MCP server that lets Claude read your **Google Search Console** and **Google Analytics 4** data. It runs on **Cloudflare Workers** and you add it to Claude as a **custom connector**.
+A remote MCP server that lets Claude read your **Google Search Console** and **Google Analytics 4** data. It runs on **Cloudflare Workers** (free plan), and you add it to Claude as a **custom connector**.
 
 - **Read-only.** It uses Google's read-only scopes, so it cannot change, delete or submit anything in GSC or GA4.
-- **Your sites only.** It authenticates with one Google *service account* that you add to your own properties.
-- **Per-person access.** Each person (you and your colleague) gets their own secret token. You can remove one without affecting the other.
+- **Your own copy.** You deploy it on your own Cloudflare account with your own Google key. Nobody else, can see your data.
+- **Per-person access.** Every person who uses it gets their own secret token. You can remove one person without affecting anyone else.
+- **Nothing to install.** Everything is done in your web browser. The only extra step is one copy-paste line to create a password-like token.
 
 ---
 
-## Status
+## Contents
 
-**Live and working.** It's deployed to Cloudflare and connected to Claude, and it returns real Search Console and GA4 data.
-
-| | Status |
-|---|---|
-| Server built and tested | ✅ Done |
-| Google Cloud project, APIs, service account | ✅ Done |
-| Service account added to GSC and GA4 | ✅ Done |
-| Deployed to Cloudflare, secrets set | ✅ Done |
-| Connected to your Claude account | ✅ Done, working |
-| Connector added for the other person | ⏳ To do (see Step 6) |
-| Default site/property | Optional (see Step 7) |
+- [What you need](#what-you-need)
+- [Overview: the 5 stages](#overview-the-5-stages)
+- [Stage A: Set up Google Cloud](#stage-a-set-up-google-cloud)
+- [Stage B: Give the service account access to your sites](#stage-b-give-the-service-account-access-to-your-sites)
+- [Stage C: Create your access token(s)](#stage-c-create-your-access-tokens)
+- [Stage D: Deploy to Cloudflare](#stage-d-deploy-to-cloudflare)
+- [Stage E: Connect it to Claude](#stage-e-connect-it-to-claude)
+- [What you can do with it](#what-you-can-do-with-it)
+- [Managing your server](#managing-your-server)
+- [Troubleshooting](#troubleshooting)
+- [For developers (command line)](#for-developers-command-line)
 
 ---
 
-## 1. What was built ✅
+## What you need
 
-| Part | Details |
-|---|---|
-| Stack | TypeScript + Cloudflare Workers (`wrangler`), official MCP SDK (`@modelcontextprotocol/sdk`), `zod` for input validation |
-| MCP endpoint | Streamable HTTP at `/mcp`, with the token in an `Authorization: Bearer <token>` header (how the Claude connector is set up). `/mcp/<token>` also works for clients that can't send headers. |
-| Access control | `ACCESS_TOKENS` secret holding `name:token` pairs. Wrong or missing token → `401`. Tokens shorter than 24 characters are ignored. |
-| Google auth | Service-account login built with Web Crypto (the `googleapis` package doesn't run on Workers). Access tokens are cached for about an hour. |
-| 10 tools | 5 Search Console, 4 GA4, 1 combined (listed below) |
-| Usage log | Each tool call is logged as `[name] tool: <tool>` (view it with `npm run tail`). Tokens are never logged. |
-| Helpers | `npm run token -- <name>` generates a strong token |
-| Tested | Typecheck passes. Locally verified: health check, 401 on a bad token, MCP `initialize`, `tools/list` (all 10 tools), Google key signing. Verified live: real GSC and GA4 data comes back through the Claude connector. |
+Four free accounts. You probably have some of them already.
 
-## 2. Setup steps (Steps 1–5 done, kept here for reference) 📝
+| Account | Why | Sign up |
+|---|---|---|
+| **Google account** | The one that already has access to your Search Console and GA4 properties | – |
+| **Google Cloud** | To create the "robot" account (service account) that reads your data | <https://console.cloud.google.com/> (free; no billing needed for these APIs) |
+| **GitHub** | Cloudflare deploys the code from your own copy of this repo | <https://github.com/signup> |
+| **Cloudflare** | Hosts the server | <https://dash.cloudflare.com/sign-up> (the free plan is plenty) |
+| **Claude** | Paid plan that supports custom connectors | <https://claude.ai> |
 
-Use these steps again if you ever rebuild the server, move it to another Cloudflare account, or replace the Google key.
+Time needed: about 20–30 minutes.
 
-### Step 1: Create a Google Cloud project and enable the APIs
-1. Go to <https://console.cloud.google.com/> and create a project (e.g. `gsc-ga4-mcp`).
-2. Under **APIs & Services → Library**, enable all three:
+---
+
+## Overview: the 5 stages
+
+| Stage | What you do | Where |
+|---|---|---|
+| **A** | Create a Google Cloud project, turn on 3 APIs, create a service account and download its key | Google Cloud |
+| **B** | Add the service account as a user in Search Console and GA4 | Search Console, GA4 |
+| **C** | Create a secret access token for each person | Your computer (one copy-paste line) |
+| **D** | Copy this repo to your GitHub, deploy it on Cloudflare, add the key and tokens as secrets | GitHub, Cloudflare |
+| **E** | Add the server to Claude as a custom connector and test it | Claude |
+
+Keep a private note (for example in a password manager) open while you work. You'll collect three things along the way: the **service-account email**, your **token**, and your **server URL**.
+
+---
+
+## Stage A: Set up Google Cloud
+
+### A1. Create a project
+1. Go to <https://console.cloud.google.com/> and sign in.
+2. Click the project picker at the top of the page, then **New project**.
+3. Name it, for example `gsc-ga4-mcp`, and click **Create**. Make sure the new project is selected in the project picker before you continue.
+
+### A2. Turn on the three APIs
+1. In the left menu, go to **APIs & Services → Library**.
+2. Search for each of these, open it, and click **Enable**:
    - **Google Search Console API**
    - **Google Analytics Data API**
    - **Google Analytics Admin API**
 
-### Step 2: Create the service account and download its key
-1. Go to **IAM & Admin → Service Accounts → Create service account**. Give it a name such as `mcp-reader`; it needs no roles.
-2. Open the account, then go to **Keys → Add key → Create new key → JSON**. A `.json` file downloads.
-3. Copy the account's email address. It looks like `mcp-reader@your-project.iam.gserviceaccount.com`.
+### A3. Create the service account
+A service account is a "robot" Google account. The server logs in as this robot, so it only sees what you share with it.
 
-> ⚠️ This JSON file is a password. Don't email it, commit it, or paste it into chat. Delete it from your Downloads folder after Step 4.
+1. In the left menu, go to **IAM & Admin → Service Accounts**.
+2. Click **+ Create service account**.
+3. Give it a name, for example `mcp-reader`, and click **Create and continue**.
+4. It needs **no roles**. Skip the optional steps and click **Done**.
+5. Copy the account's email address from the list. It looks like `mcp-reader@your-project.iam.gserviceaccount.com`. Save it in your note.
 
-### Step 3: Give the service account access to your sites
-- **Search Console:** for each property, go to **Settings → Users and permissions → Add user**, enter the service-account email and choose **Restricted** (read-only).
-- **GA4:** for each property, go to **Admin → Property access management → + → Add users**, enter the service-account email and choose the **Viewer** role.
+### A4. Download its key
+1. Click the service account you just made.
+2. Open the **Keys** tab, then **Add key → Create new key → JSON → Create**.
+3. A `.json` file downloads to your computer. You'll need it in Stage D.
 
-### Step 4: Deploy to Cloudflare
-Run these in PowerShell, in this folder:
+> ⚠️ **This JSON file is a password.** Don't email it, upload it to GitHub, or paste it into a chat. After Stage D, delete it or move it somewhere safe.
 
-```powershell
-npx wrangler login     # opens the browser; log in to Cloudflare (a free account is fine)
-npm run deploy         # prints your URL, e.g. https://gsc-ga4-mcp.<you>.workers.dev
-
-# Upload the Google key (change the path to where your key file is):
-Get-Content "C:\path\to\key.json" -Raw | npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
-
-# Create one token per person:
-npm run token -- me
-npm run token -- partner
-
-# Upload the tokens (one line, comma between entries, no spaces):
-"me:<your-token>,partner:<their-token>" | npx wrangler secret put ACCESS_TOKENS
-```
-
-Secrets take effect immediately, with no redeploy. Afterwards, delete the JSON key file or store it somewhere safe, outside this folder.
-
-Check: opening `https://gsc-ga4-mcp.<you>.workers.dev` in a browser should show *"gsc-ga4-mcp is running"*.
-
-### Step 5: Add the connector in Claude
-In Claude, go to **Settings → Connectors → Add custom connector**:
-- **Name:** `GSC + GA4`
-- **URL:** `https://gsc-ga4-mcp.<you>.workers.dev/mcp` (no token in the URL)
-- **Authentication:** **No sign-in**
-- **Request headers:** add one header named `Authorization` with the value `Bearer <your-token>` (the word `Bearer`, one space, then the token)
-
-Then enable the connector in a chat (via the "+" / tools menu).
-
-> Fallback: if a client can't send headers, use `https://gsc-ga4-mcp.<you>.workers.dev/mcp/<your-token>` as the URL instead. The server accepts both.
-
-### Step 6: The other person
-- They need **their own Claude account**. Anthropic's terms don't allow sharing one login.
-- Send them the URL and **their own token** through a private channel. They add the connector the same way as in Step 5, with `Bearer <their-token>` as the header value.
-- **To remove their access:** run `npx wrangler secret put ACCESS_TOKENS` again without their entry. Access stops immediately; you don't need to redeploy or change anything in Google.
-
-### Step 7 (optional): Set defaults
-If you mostly work with one site, set it in `wrangler.jsonc` → `vars` (e.g. `"DEFAULT_GSC_SITE": "sc-domain:example.com"`, `"DEFAULT_GA4_PROPERTY": "123456789"`), then run `npm run deploy` again. Claude can then leave out the site/property.
-
-### Then test it
-Ask Claude: *"List my Search Console sites and GA4 properties."* If both lists appear, the setup worked.
+> If Google says *"Service account key creation is disabled"*, your Google Cloud organisation blocks keys. Ask your Workspace admin to allow it for this project, or use a project under a personal Google account.
 
 ---
 
-## 3. What you can do with it 🚀
+## Stage B: Give the service account access to your sites
+
+Do this for **every** site and GA4 property you want Claude to see.
+
+### Search Console
+1. Open <https://search.google.com/search-console> and select the property.
+2. Go to **Settings → Users and permissions → Add user**.
+3. Paste the service-account email, choose **Restricted** (read-only), and click **Add**.
+
+### Google Analytics 4
+1. Open <https://analytics.google.com> and select the property.
+2. Click **Admin** (gear icon, bottom left) → **Property access management**.
+3. Click **+** → **Add users**, paste the service-account email, choose the **Viewer** role, untick "Notify new users by email", and click **Add**.
+
+It can take a few minutes for new access to start working.
+
+---
+
+## Stage C: Create your access token(s)
+
+The token is a long random password. Claude sends it with every request, and the server refuses anyone without a valid one. Make **one token per person** who will use the server.
+
+**On Windows:** open the Start menu, type **PowerShell**, open it, paste this line, and press Enter:
+
+```powershell
+$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); -join ($b | ForEach-Object { $_.ToString('x2') })
+```
+
+**On Mac:** open **Terminal** (Applications → Utilities), paste this line, and press Enter:
+
+```bash
+openssl rand -hex 32
+```
+
+Either one prints a 64-character string of letters and numbers, like `3f9a…c71e`. That's your token. Run it again for each extra person.
+
+Now give each token a short name (letters, numbers, `-` or `_`) and write them in this format, **all on one line, separated by commas, with no spaces**:
+
+```
+me:3f9a...c71e,alex:8b20...4d9f
+```
+
+This whole line is your **ACCESS_TOKENS** value for Stage D. The names only show up in your server logs so you can see who used it.
+
+> Rules: tokens must be at least 24 characters long (shorter ones are ignored), and must not contain `:` or `,`. You can also use a password manager to generate them, as long as you follow these rules.
+
+---
+
+## Stage D: Deploy to Cloudflare
+
+### D1. Copy this repo to your GitHub account
+1. Sign in to GitHub and open this repo's page.
+2. Click **Fork** (top right) → **Create fork**.
+
+You now have your own copy at `github.com/<your-username>/GSC-GA4-MCP`. It's fine for it to be public, because it contains no keys or tokens. Those go into Cloudflare as secrets in D3.
+
+### D2. Create the Worker from your copy
+1. Sign in to <https://dash.cloudflare.com>.
+2. In the left menu, go to **Compute (Workers) → Workers & Pages**, then click **Create application**.
+3. Choose **Import a repository** (or **Continue with GitHub**). Allow Cloudflare to access your GitHub account; you can limit it to just the `GSC-GA4-MCP` repo.
+4. Select your `GSC-GA4-MCP` repo and fill in:
+   - **Project name:** `gsc-ga4-mcp` (this becomes part of your URL)
+   - **Build command:** leave empty
+   - **Deploy command:** `npm run deploy` (or `npx wrangler deploy`, both work)
+5. Click **Create and deploy** and wait for the build to finish (1–2 minutes).
+6. If this is your first Worker, Cloudflare may ask you to pick a **workers.dev subdomain**. Choose any name.
+
+When it's done, Cloudflare shows your server URL, like:
+
+```
+https://gsc-ga4-mcp.<your-subdomain>.workers.dev
+```
+
+Save it in your note.
+
+### D3. Add the two secrets
+The server is running but doesn't have your Google key or tokens yet.
+
+1. In the Cloudflare dashboard, open your Worker (**Workers & Pages → gsc-ga4-mcp**).
+2. Go to **Settings → Variables and Secrets** and click **+ Add**.
+3. Add the first secret:
+   - **Type:** Secret
+   - **Variable name:** `GOOGLE_SERVICE_ACCOUNT_JSON`
+   - **Value:** open the `.json` key file from Stage A4 in Notepad (Windows) or TextEdit (Mac), select **everything** (Ctrl+A / Cmd+A), copy it, and paste it here. Include the `{` at the start and the `}` at the end.
+4. Click **+ Add** again for the second secret:
+   - **Type:** Secret
+   - **Variable name:** `ACCESS_TOKENS`
+   - **Value:** the one-line list from Stage C, for example `me:3f9a...c71e,alex:8b20...4d9f`
+5. Click **Deploy** (or **Save**) to apply them.
+
+The names must be typed **exactly** as shown, in capitals. Once saved, Cloudflare hides secret values; nobody can read them back, including you.
+
+Now delete the `.json` key file from your Downloads folder, or move it somewhere safe.
+
+### D4. Check it's running
+Open your server URL in a browser. You should see a line starting with:
+
+```
+gsc-ga4-mcp is running.
+```
+
+---
+
+## Stage E: Connect it to Claude
+
+### E1. Add the connector
+1. In Claude, go to **Settings → Connectors → Add custom connector**.
+2. Fill in:
+   - **Name:** `GSC + GA4`
+   - **URL:** your server URL with `/mcp` added at the end, for example `https://gsc-ga4-mcp.<your-subdomain>.workers.dev/mcp`
+   - **Authentication:** **No sign-in**
+   - **Request headers:** add one header
+     - **Name:** `Authorization`
+     - **Value:** `Bearer <your-token>`: the word `Bearer`, one space, then **only your token** (not the `me:` part)
+3. Save it.
+
+> **Fallback:** if a client can't send headers, use `https://gsc-ga4-mcp.<your-subdomain>.workers.dev/mcp/<your-token>` as the URL instead. If you do, treat that URL like a password.
+
+### E2. Turn it on in a chat
+Start a new chat, open the **+** / tools menu, and enable **GSC + GA4**.
+
+### E3. Test it
+Ask Claude:
+
+> *"List my Search Console sites and GA4 properties."*
+
+If both lists appear, you're done. 🎉 If something goes wrong, see [Troubleshooting](#troubleshooting).
+
+### E4 (optional): Set a default site and property
+If you mostly use one site, you can make it the default so you don't have to name it every time.
+
+1. On GitHub, open **your** copy of the repo and click the file `wrangler.jsonc`.
+2. Click the ✏️ pencil icon to edit it, and fill in the two values under `"vars"`:
+   ```jsonc
+   "DEFAULT_GSC_SITE": "sc-domain:example.com",
+   "DEFAULT_GA4_PROPERTY": "123456789"
+   ```
+   - For a **domain** property in Search Console, use `sc-domain:example.com`. For a **URL-prefix** property, use the full URL with a trailing slash, e.g. `https://www.example.com/`.
+   - The GA4 property ID is the number shown in **GA4 → Admin → Property details**. You can also ask Claude to "list my GA4 properties".
+3. Click **Commit changes**. Cloudflare notices the change and redeploys by itself within a minute or two. You can watch it under your Worker → **Deployments**.
+
+---
+
+## What you can do with it
 
 ### The tools
 
@@ -141,40 +268,100 @@ Ask Claude: *"List my Search Console sites and GA4 properties."* If both lists a
 
 ---
 
-## 4. Maintenance & security
+## Managing your server
+
+Everything here is done in the Cloudflare dashboard under **Workers & Pages → gsc-ga4-mcp**, unless noted.
 
 | Task | How |
 |---|---|
-| See who used which tool | `npm run tail` (live logs), or Cloudflare dashboard → Workers → gsc-ga4-mcp → Logs |
-| Add or remove a person | Edit the list and run `npx wrangler secret put ACCESS_TOKENS` again |
-| A token leaked | Generate a new one with `npm run token`, update `ACCESS_TOKENS`, and have the person update the header value in their connector |
-| Rotate the Google key | Create a new key in Google Cloud, run `npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON`, then delete the old key |
-| Remove all access | Remove the service-account email from GSC and GA4, or run `npx wrangler delete` |
-| Cost | Cloudflare Workers' free tier (100k requests/day) is far more than this needs. The Google APIs used are free. |
+| **Add a person** | Make a token for them (Stage C). Go to **Settings → Variables and Secrets**, edit `ACCESS_TOKENS`, add `,name:token` to the end of the list, and save. Then send them the URL and token. |
+| **Remove a person** | Edit `ACCESS_TOKENS` and delete their `name:token` entry (and the comma before it). Their access stops immediately. |
+| **A token leaked** | Make a new token, replace the old one in `ACCESS_TOKENS`, and have that person update the header value in their Claude connector. |
+| **Add another site** | Add the service-account email to that GSC/GA4 property (Stage B). Nothing changes on Cloudflare. |
+| **Replace the Google key** | In Google Cloud, create a new JSON key (Stage A4). Replace the `GOOGLE_SERVICE_ACCOUNT_JSON` secret with its contents, then delete the old key in Google Cloud (**Keys** tab → 🗑️). |
+| **See who used which tool** | Your Worker → **Logs** (or **Observability**). Each call is logged as `[name] tool: <tool>`. Tokens are never logged. |
+| **Get updates from this repo** | On your GitHub copy, click **Sync fork → Update branch**. Cloudflare redeploys automatically. |
+| **Shut it all down** | Remove the service-account email from GSC and GA4, and/or delete the Worker in Cloudflare (**Settings → Delete**). |
+| **Cost** | The Cloudflare Workers free plan (100,000 requests/day) is far more than this needs. The Google APIs used are free. |
 
-### When do I need to run `npm run deploy`?
+Secret changes apply right away. Code or `wrangler.jsonc` changes redeploy automatically when you commit them on GitHub.
+
+---
+
+## Troubleshooting
+
+| Problem | Likely cause and fix |
+|---|---|
+| The server URL doesn't show *"gsc-ga4-mcp is running"* | The deploy failed or is still running. Check your Worker → **Deployments** for errors, and try **Retry build**. |
+| Claude can't connect, or you get **401 Unauthorized** | The token is wrong. Check that the header name is exactly `Authorization`, the value is `Bearer ` + token with one space, you used only the token (not `me:`), and the token is in `ACCESS_TOKENS`. |
+| **403** / *"permission denied"* / a site is missing from the list | The service account wasn't added to that GSC or GA4 property (Stage B), or it was added a few minutes ago. Double-check the email address. |
+| *"API has not been used in project… or it is disabled"* | One of the three APIs isn't enabled (Stage A2), or it was enabled in a different project from the service account. |
+| *"GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON"* / *"is missing client_email or private_key"* / *"invalid_grant"* | The key secret is incomplete or the key was deleted. Copy the whole file again, from `{` to `}`, and replace the secret. Check the key still exists in Google Cloud (**Keys** tab). |
+| *"GOOGLE_SERVICE_ACCOUNT_JSON secret is not set"*, or every token gets 401 | A secret name is misspelt or the secret wasn't saved. The names must be exactly `GOOGLE_SERVICE_ACCOUNT_JSON` and `ACCESS_TOKENS`. |
+| Search Console numbers look low for recent days | Normal. GSC data lags 2–3 days. |
+| GSC and GA4 numbers don't match | Normal. GSC counts Google clicks; GA4 counts sessions from all search engines, and some visitors block analytics. |
+| Tools don't appear in Claude | Enable the connector in the chat's **+** / tools menu, or remove and re-add the connector. |
+
+---
+
+## For developers (command line)
+
+You don't need this section if you followed Stages A–E. It's for running the server on your own computer, or deploying from the command line instead of through GitHub. You'll need [Node.js](https://nodejs.org/) 20 or newer.
+
+### How it works
+
+| Part | Details |
+|---|---|
+| Stack | TypeScript + Cloudflare Workers (`wrangler`), official MCP SDK (`@modelcontextprotocol/sdk`), `zod` for input validation |
+| MCP endpoint | Streamable HTTP at `/mcp`, with the token in an `Authorization: Bearer <token>` header. `/mcp/<token>` also works for clients that can't send headers. Stateless: a fresh MCP server per request. |
+| Access control | `ACCESS_TOKENS` secret holding `name:token` pairs, checked with SHA-256 and a constant-time compare. Wrong or missing token → `401`. Tokens shorter than 24 characters are ignored. |
+| Google auth | Service-account login built with Web Crypto (the `googleapis` package doesn't run on Workers). Google access tokens are cached for about an hour. |
+| Usage log | Each tool call is logged as `[name] tool: <tool>`. Tokens are never logged. |
+
+### Deploy from the command line
+
+```powershell
+npm install
+npx wrangler login     # opens the browser; log in to Cloudflare
+npm run deploy         # prints your URL
+
+# Upload the Google key (change the path to where your key file is):
+Get-Content "C:\path\to\key.json" -Raw | npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
+
+# Create a token per person:
+npm run token -- me
+
+# Upload the tokens (one line, comma between entries, no spaces):
+"me:<your-token>,alex:<their-token>" | npx wrangler secret put ACCESS_TOKENS
+```
+
+On Mac/Linux, use `cat key.json | npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON` and `echo "me:…" | npx wrangler secret put ACCESS_TOKENS`.
+
+### Useful commands
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Local server on `http://localhost:8787/mcp` (needs a `.dev.vars` file, see below) |
+| `npm run typecheck` | Type-check the code |
+| `npm run deploy` | Deploy to Cloudflare |
+| `npm run tail` | Live logs |
+| `npm run token -- <name>` | Generate a token |
+
+For local development, create a file named `.dev.vars` in the project folder (it's git-ignored, never commit it) with two lines:
+
+```
+GOOGLE_SERVICE_ACCOUNT_JSON='<the whole key JSON on one line>'
+ACCESS_TOKENS="me:<a token>"
+```
+
+### When is a redeploy needed?
 
 | Change | Redeploy? |
 |---|---|
-| Code in `src/` changed (e.g. new tools) | ✅ Yes |
-| `wrangler.jsonc` changed (e.g. default site/property) | ✅ Yes |
-| Secrets changed (`wrangler secret put ...`) | ❌ No, they apply immediately |
+| Code in `src/` changed | ✅ Yes (automatic if deployed from GitHub) |
+| `wrangler.jsonc` changed | ✅ Yes (automatic if deployed from GitHub) |
+| Secrets changed | ❌ No, they apply immediately |
 | `README.md` or `scripts/` changed | ❌ No, they don't run on the server |
-
-**How the token is sent:** Claude's custom connectors let you add request headers, so each person's token goes in an `Authorization: Bearer <token>` header that Claude stores encrypted. The server also accepts the token in the URL path (`/mcp/<token>`) for clients that can't send headers; if you use that form, treat the URL like a password. If you later want a "Sign in with Google" flow instead, the server can be upgraded to OAuth with Cloudflare's `workers-oauth-provider`.
-
-## 5. Local development
-
-Optional. You only need this to test changes on your own computer before deploying.
-
-```bash
-npm install
-# Create a file named .dev.vars (it's git-ignored) containing two lines:
-#   GOOGLE_SERVICE_ACCOUNT_JSON='<the whole key JSON on one line>'
-#   ACCESS_TOKENS="me:<a token from npm run token>"
-npm run dev                      # http://localhost:8787/mcp (Authorization: Bearer <token>)
-npm run typecheck
-```
 
 ### Project layout
 ```
@@ -190,8 +377,3 @@ src/
 scripts/generate-token.mjs
 wrangler.jsonc       Cloudflare config (+ optional default site/property)
 ```
-
-## 6. Possible next steps
-- Add more combined tools, e.g. "content decay" (pages losing clicks *and* engagement) or "query → page cannibalisation".
-- Add caching (Cloudflare KV) for repeated reports.
-- Replace the tokens with an OAuth ("Sign in with Google") login.
