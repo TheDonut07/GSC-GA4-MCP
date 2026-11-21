@@ -21,3 +21,6 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude Code project notes (kept local, not published)
+CLAUDE.md
